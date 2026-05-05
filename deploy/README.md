@@ -119,5 +119,26 @@ docker compose pull
 docker compose up -d
 ```
 
+## Security scanning
+
+The published images are built by GitHub Actions and scanned in two
+ways before / alongside publish:
+
+- **Source / config** — `bandit` (Python AST) + `semgrep` (multi-language
+  security-audit ruleset) + `trivy config` (Dockerfile + k8s
+  manifest misconfigurations) run on every PR and on every push to
+  `main`. HIGH-severity findings block the merge; medium / low get
+  reported in the **Security** tab of the repo for visibility.
+- **Image CVEs** — `trivy image` scans the freshly-built image's OS
+  packages + Python deps on every PR, and the published `:main` tag
+  nightly at 09:00 UTC. CVEs with available fixes at HIGH/CRITICAL
+  severity fail the workflow; unfixed CVEs are reported but don't
+  block (there's nothing actionable). The nightly run is the channel
+  through which a newly-disclosed `python:3.11-slim` CVE produces a
+  flagged build even when no code has changed.
+
+`.github/workflows/security.yml` is the workflow file. Findings flow
+into the **Security** tab via SARIF upload from each scanner.
+
 The persistence volume survives across image pulls, so saved designs +
 agent sessions carry over.

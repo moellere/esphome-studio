@@ -1,0 +1,201 @@
+name: security
+
+# Security scanning. Runs on every PR (catch findings before merge) +
+# nightly against main (catch newly-disclosed CVEs in the base image
+# without waiting for the next code change).
+#
+# Three scanners, three concerns:
+#
+#   bandit       Python source -- AST patterns for known-bad calls
+#                (eval, exec, hardcoded creds, weak crypto, etc.).
+#   semgrep      Multi-language patterns (python + dockerfile + the
+#                security-audit ruleset).
+#   trivy        Two passes: `config` reads the Dockerfile + k8s
+#                manifests for misconfigurations; `image` scans the
+#                published / freshly-built image's filesystem for
+#                CVEs in OS packages + Python deps.
+#
+# Findings flow into the GitHub Security tab via SARIF upload from each
+# scanner. The workflow gates merges on HIGH/CRITICAL findings only --
+# medium / low get reported but don't fail the build, so PRs aren't
+# drowned in noise from informational rules.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # 09:00 UTC daily. Picks up newly-disclosed CVEs in python:3.11-slim
+    # + transitive deps that weren't in any code change.
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # SARIF upload
+  actions: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Pin the version. A scanner update mid-PR shouldn't suddenly
+      # fail unrelated changes; we'll bump this deliberately.
+      - run: pip install bandit==1.7.10
+
+      # Full report -> SARIF for the Security tab. continue-on-error so
+      # the upload step still runs even when findings exist.
+      - name: Bandit (full report)
+        continue-on-error: true
+        run: bandit -r studio/ -f sarif -o bandit.sarif
+
+      - name: Upload Bandit SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+      # Gate: -lll = exit non-zero only when HIGH-severity findings
+      # exist. Medium / low get logged but don't block merges.
+      - name: Bandit gate (HIGH severity blocks)
+        run: bandit -r studio/ -lll
+
+  # ---------------------------------------------------------------------
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      # Pinned image: a Semgrep rule update shouldn't break unrelated PRs.
+      image: returntocorp/semgrep:1.96.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Semgrep (full SARIF)
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config=p/python \
+            --config=p/security-audit \
+            --config=p/dockerfile \
+            --sarif --output=semgrep.sarif
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      # Gate on ERROR-severity rules from the security-audit pack.
+      - name: Semgrep gate (ERROR severity blocks)
+        run: |
+          semgrep scan \
+            --config=p/security-audit \
+            --severity=ERROR \
+            --error
+
+  # ---------------------------------------------------------------------
+  trivy-config:
+    # Lints the Dockerfile + k8s manifests for misconfigurations
+    # (running as root, no HEALTHCHECK, missing securityContext, etc.).
+    # Distinct from the image-CVE scan below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy config scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy config SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
+      - name: Trivy config gate
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+  # ---------------------------------------------------------------------
+  trivy-image:
+    # PR + push: build the image locally and scan it.
+    # Schedule:   pull the published `:main` tag and scan that.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (PR / push)
+        if: github.event_name != 'schedule'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true              # load into the local docker daemon
+          push: false
+          tags: esphome-studio:scan
+
+      - name: Pull published image (schedule)
+        if: github.event_name == 'schedule'
+        run: docker pull ghcr.io/${{ github.repository_owner }}/esphome-studio:main
+
+      - name: Pick image ref
+        id: image
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "ref=ghcr.io/${{ github.repository_owner }}/esphome-studio:main" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=esphome-studio:scan" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trivy image scan (SARIF)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          # Skip CVEs that have no upstream fix yet -- those are
+          # "noted, can't act on" and only generate noise.
+          ignore-unfixed: true
+
+      - name: Upload Trivy image SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Trivy image gate
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
