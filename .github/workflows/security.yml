@@ -51,9 +51,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Pin the version. A scanner update mid-PR shouldn't suddenly
-      # fail unrelated changes; we'll bump this deliberately.
-      - run: pip install bandit==1.7.10
+      # Pin a minor version. A scanner update mid-PR shouldn't suddenly
+      # fail unrelated changes; we'll bump deliberately. Pin to 1.9.x
+      # (the current stable line as of 2026-05).
+      - run: pip install 'bandit~=1.9.4'
 
       # Full report -> SARIF for the Security tab. continue-on-error so
       # the upload step still runs even when findings exist.
@@ -115,9 +116,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # NOTE: trivy-action is on @master while we stabilise the workflow.
+      # Re-pin to a specific tag (e.g., 0.30.0) once the runs are green;
+      # @master is a moving ref and a slight supply-chain risk.
       - name: Trivy config scan
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: config
           scan-ref: .
@@ -133,7 +137,7 @@ jobs:
           category: trivy-config
 
       - name: Trivy config gate
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: config
           scan-ref: .
@@ -174,7 +178,7 @@ jobs:
 
       - name: Trivy image scan (SARIF)
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ steps.image.outputs.ref }}
           format: sarif
@@ -192,7 +196,7 @@ jobs:
           category: trivy-image
 
       - name: Trivy image gate
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ steps.image.outputs.ref }}
           severity: HIGH,CRITICAL
