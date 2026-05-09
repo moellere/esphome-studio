@@ -205,36 +205,119 @@ testing surfaced two strategic items below.)
    Combined estimate: 5–10× cheaper per turn with no real
    capability loss. Items 1.1 + 1.2 are this session's PR.
 
-2. **MCP pivot (placeholder — bigger architectural call).**
-   Expose the agent tool surface (`wirestudio/agent/tools.py` —
-   11 tools) as an MCP server. Users with a Claude Code or
+2. **MCP pivot (architectural decision, not yet scoped to code).**
+   Expose the existing agent tool surface (`wirestudio/agent/tools.py`
+   — 11 tools) as an MCP server. Users with a Claude Code or
    Claude Desktop subscription drive the studio from their host
    client; wirestudio pays nothing for LLM tokens. Subscription
-   economics for the user, decoupling for us. The HTTP API
-   already provides design persistence + render — MCP is mostly
-   plumbing.
+   economics for the user, decoupling for us.
 
-   Open questions to settle before scoping the work:
-   - **Two surfaces or one?** Keep the embedded `/agent/turn`
-     endpoint for users with their own API key, plus add MCP?
-     Or drop the embedded path and lean on MCP only? More code
-     vs. simpler ownership.
-   - **Tool-call boundary.** Each MCP tool is stateless;
-     wirestudio's tools today mutate a design dict in memory.
-     Either tools take + return the design dict each call (fat
-     payload), or they reference a server-side design id and
-     mutate via the existing `/designs/{id}` endpoints
-     (stateful, racy under concurrent agents).
-   - **Render visibility.** The web UI's value-add is the live
-     YAML / ASCII / pinout pane. If the user is driving from
-     Claude Code, do they ever open the UI? If not, the
-     studio's UI surface shrinks. If yes, MCP needs a "design
-     id" the UI can subscribe to so edits show up live.
+   The architectural principle (load-bearing for every MCP-era
+   PR after this):
+
+   > Wirestudio is the **compile engine** for ESPHome / KiCAD /
+   > OpenSCAD / BOM outputs. It owns design.json and the
+   > deterministic generators. **No LLM ever sits in a compile
+   > or fetch path** — they're pure functions of design + library.
+   > MCP is a thin chat surface over the **design-editing** tools
+   > only. LLMs are useful for interpreting natural language into
+   > design edits, proposing library entries from upstream
+   > lookups, and explaining things; never for emitting an
+   > artifact.
+
+   Why this matters: contrast with KiCAD-MCP-Server
+   (https://github.com/mixelpixx/KiCAD-MCP-Server), which makes
+   the LLM the schematic engine — every component placement,
+   every wire, every route is a tool call. Reproducibility
+   suffers (same prompt → different schematic across runs);
+   cost compounds (every edit burns tokens); audit trail
+   evaporates (the bug is in a non-deterministic chat, not in
+   a function). Wirestudio's design keeps the LLM out of the
+   compile loop entirely. Same `design.json` → same
+   `.kicad_sch` every time; diffable in git; cheap.
+
+   ### Phase 1: wirestudio MCP server (the actual scope)
+
+   1. **MCP server skeleton** — `wirestudio/mcp/server.py`
+      wrapping the 11 tools in `wirestudio/agent/tools.py`. Same
+      Python, different protocol shim. Day-1 deliverable. Tools
+      expose only the design-editing surface; generators stay
+      callable via HTTP API + CLI as before.
+   2. **`design-changed` SSE channel** on the HTTP API. Browser
+      tabs subscribe per design id; any write to that design
+      (from MCP, HTTP, or CLI) triggers the same channel and the
+      browser re-fetches + re-renders. Closes the
+      "drive-from-chat, see-it-in-the-browser" loop.
+   3. **MCP resources** — `library://components`,
+      `library://boards`, `design://{id}/yaml`,
+      `design://{id}/ascii`. Read-only views the LLM can pull
+      without burning tokens reconstructing them.
+   4. **`set_active_design(id)` tool + UI plumbing.** Browser
+      cookies the active id; MCP tools default to it. So the
+      user's "add a BME280 to this design" prompt resolves
+      against whatever the browser tab is showing.
+   5. **MCP docs.** `docs/MCP.md` with the
+      `claude_desktop_config.json` snippet and a one-screen
+      walkthrough.
+
+   ~2-3 PRs of work total. The first is genuinely small because
+   `tools.py` is already a clean function surface — MCP is
+   mostly bindings.
+
+   ### Phase 2: knowledge importers (bigger payoff than KiCAD-MCP)
+
+   We do **not** integrate KiCAD-MCP-Server. Every capability
+   it wraps (KiCAD symbol/footprint libs, JLCPCB part lookup,
+   custom symbol generation, kicad-cli operations) is directly
+   programmable from Python without an MCP middleman:
+
+   - `.kicad_sym` and `.pretty` files ship with KiCAD; parse
+     them with `kiutils` or by hand.
+   - JLCPCB has a public part API; community tools
+     (`easyeda2kicad`, JLCPCB BOM matchers) hit it directly.
+   - `kicad-cli` (KiCAD 7+) is a real shell command for DRC,
+     SVG export, etc.
+
+   So we build small in-process **knowledge importers**:
+
+   - `wirestudio.kicad.import` — `python -m
+     wirestudio.kicad.import --symbol Sensor:BME280` emits a
+     draft `library/components/bme280.yaml` snippet (or fills
+     the `kicad:` block on an existing one). Closes the
+     "no-kicad-mapping" tail without hand-writing each entry.
+   - `wirestudio.jlcpcb` — `python -m wirestudio.jlcpcb check
+     examples/garage-motion.json` walks the BOM, queries
+     JLCPCB, surfaces "C25 (BME280) — 12 in stock @ $4.20" or
+     "P/N not found, source manually." Pre-PCB-order
+     feasibility gate.
+   - `wirestudio.kicad.cli render --png` — shells out to
+     `kicad-cli` to produce a PNG of the rendered schematic.
+     Inline preview in the web UI; closes the "I can't see
+     what the schematic looks like without leaving the studio"
+     gap.
+
+   These importers benefit the CLI and web UI too, not just
+   the chat-driven flow. Same code reachable from MCP tools so
+   Claude can call them on the user's behalf.
+
+   ### Open decisions before phase 1
+
+   - **Transport.** STDIO is most mature but assumes the MCP
+     client launches wirestudio as a subprocess — wrong shape
+     for a daemon you also point a browser at. **SSE/HTTP
+     transport** lets wirestudio run as a normal long-lived
+     service that browser + Claude Code both connect to.
+     Newer spec, less mature, but right for this UX. Pick once.
+   - **Embedded agent retirement.** Today's `/agent/turn`
+     endpoint requires the user's own Anthropic key. Once MCP
+     ships, that endpoint is redundant for subscription users.
+     Keep both behind feature flags during transition; retire
+     after MCP feels solid.
    - **Auth model.** Today the agent endpoints rate-limit by
      IP; an MCP server reachable on the host needs a different
-     story (loopback-only, token, both?).
-
-   Not blocked, just need to decide before pouring code in.
+     story (loopback-only, token, both?). Loopback-only is the
+     90% case for homelab self-hosting; revisit if a public
+     deployment lands.
 
 3. **Gemini plan tail (open items from PR #19's review doc):**
    - SQLite-backed `DesignStore` + `SessionStore` implementations
