@@ -49,20 +49,27 @@ def resolve_token(
 
 
 class BearerTokenMiddleware:
-    """ASGI middleware that 401s any HTTP request without a matching bearer token.
+    """ASGI middleware that 401s requests under `path_prefix` lacking a matching bearer token.
 
     Compares the `Authorization: Bearer <token>` header against the configured
     token using `secrets.compare_digest` so a malicious client can't use timing
-    to brute-force the token. Non-HTTP scopes (lifespan, websocket) pass
-    through untouched.
+    to brute-force the token. Requests outside `path_prefix` (e.g. the SPA's
+    `/`, `/favicon.ico`, `/library/...`) pass through untouched -- the token
+    only gates the MCP endpoint, not the rest of the API.
     """
 
-    def __init__(self, app: ASGIApp, *, token: str) -> None:
+    def __init__(self, app: ASGIApp, *, token: str, path_prefix: str = "/mcp") -> None:
         self.app = app
         self._token = token
+        self._prefix = path_prefix
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if not (path == self._prefix or path.startswith(self._prefix + "/")):
             await self.app(scope, receive, send)
             return
 

@@ -185,3 +185,28 @@ async def test_mounted_mcp_route_requires_token(monkeypatch, tmp_path: Path):
             headers={"Accept": "application/json, text/event-stream"},
         )
     assert r.status_code == 401, r.text
+
+
+async def test_non_mcp_paths_unaffected_by_token(monkeypatch, tmp_path: Path):
+    # Regression: with the MCP app mounted at "/", an unscoped middleware
+    # would 401 every fall-through path -- including the SPA root and the
+    # rest of the API. The token must only gate /mcp.
+    monkeypatch.setenv("WIRESTUDIO_MCP_TOKEN", "test-secret")
+    monkeypatch.setenv("DESIGNS_DIR", str(tmp_path / "designs"))
+    monkeypatch.setenv("SESSIONS_DIR", str(tmp_path / "sessions"))
+
+    from wirestudio.api.app import create_app
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        # Existing FastAPI route -- token must not interfere.
+        health = await c.get("/health")
+        assert health.status_code == 200
+        # Library route the SPA hits unauthenticated.
+        boards = await c.get("/library/boards")
+        assert boards.status_code == 200
+        # Unknown path: should land in the mcp_app router (not the auth
+        # gate) and 404 cleanly. A 401 here would be the regression.
+        unknown = await c.get("/no-such-path")
+        assert unknown.status_code != 401
