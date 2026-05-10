@@ -300,24 +300,48 @@ testing surfaced two strategic items below.)
    the chat-driven flow. Same code reachable from MCP tools so
    Claude can call them on the user's behalf.
 
-   ### Open decisions before phase 1
+   ### Decisions locked before phase 1 (2026-05-10)
 
-   - **Transport.** STDIO is most mature but assumes the MCP
-     client launches wirestudio as a subprocess — wrong shape
-     for a daemon you also point a browser at. **SSE/HTTP
-     transport** lets wirestudio run as a normal long-lived
-     service that browser + Claude Code both connect to.
-     Newer spec, less mature, but right for this UX. Pick once.
-   - **Embedded agent retirement.** Today's `/agent/turn`
-     endpoint requires the user's own Anthropic key. Once MCP
-     ships, that endpoint is redundant for subscription users.
-     Keep both behind feature flags during transition; retire
-     after MCP feels solid.
-   - **Auth model.** Today the agent endpoints rate-limit by
-     IP; an MCP server reachable on the host needs a different
-     story (loopback-only, token, both?). Loopback-only is the
-     90% case for homelab self-hosting; revisit if a public
-     deployment lands.
+   - **Transport: Streamable HTTP** (the modern single-endpoint
+     MCP HTTP transport, not the deprecated HTTP+SSE two-endpoint
+     variant). Mounted into the existing FastAPI app at `/mcp`
+     via the `mcp` SDK's ASGI integration — same process, same
+     uvicorn, no subprocess. STDIO is rejected for wirestudio's
+     shape: it would spawn a second wirestudio process per chat
+     session with its own copies of `default_library()`, the
+     design store, and session state, racing the browser-facing
+     daemon over the same JSON files. HTTP also makes the
+     `design-changed` SSE channel trivial — MCP writes and
+     browser fan-out share an in-process pub/sub. A
+     `python -m wirestudio.mcp.stdio` wrapper for Claude Desktop
+     users who prefer subprocess config can be a ~30-line
+     follow-up; ship HTTP first.
+   - **Auth: bearer token, always required on `/mcp`.** Read
+     from `WIRESTUDIO_MCP_TOKEN`; if unset, auto-generate a
+     32-byte token at first start and persist it to
+     `~/.config/wirestudio/mcp-token` (mode 0600). Log
+     "Generated MCP token; copy from <path>" once. Operators
+     using k8s Secrets / sops / etc. set the env var and the
+     file path is ignored. Token guards `/mcp` only — existing
+     `/design/*`, `/agent/*`, `/library/*` endpoints keep their
+     current unauthenticated + CORS-gated + rate-limited model;
+     hardening those is a separate effort and bundling it would
+     balloon this PR's scope. Bind address inherits today's
+     uvicorn config (no new flag) — Docker/K8s deployments
+     already face the network correctly. Loopback-only-no-auth
+     is rejected: wirestudio's actual shape is "daemon on a
+     server, client on a laptop," and loopback would break that
+     day-1 UX. OAuth 2.1 (the MCP spec's official multi-user
+     flow) is deferred — right for SaaS-grade hosted MCPs,
+     wrong for a single-operator homelab tool. Documented as
+     upgrade path in `docs/MCP.md`.
+   - **Embedded agent retirement: held.** `/agent/turn` and
+     `/agent/stream` keep running unchanged through the MCP
+     phase. They use the user's Anthropic key and stay useful
+     for users without a Claude subscription, plus they're the
+     only client today for the embedded session store. Revisit
+     after Phase 1 + Phase 2 ship and we have usage signal on
+     whether anyone still hits the embedded endpoints.
 
 3. **Gemini plan tail (open items from PR #19's review doc):**
    - SQLite-backed `DesignStore` + `SessionStore` implementations
