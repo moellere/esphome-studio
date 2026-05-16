@@ -213,8 +213,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Content-Type", "Authorization", "Accept"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "Accept", "*"],
     )
 
     @app.get("/docs", include_in_schema=False)
