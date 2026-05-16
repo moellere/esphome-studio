@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wirestudio — design ESPHome IoT devices, honestly</title>
+<meta name="description" content="wirestudio turns a single design.json into deterministic ESPHome YAML, a KiCad schematic, and a BOM — with a CSP pin solver, a verified-output gate, and an MCP server.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta property="og:title" content="wirestudio">
+<meta property="og:description" content="Design IoT devices, honestly. design.json in — ESPHome YAML, KiCad schematic, and BOM out, deterministically.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wirestudio.io">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="brand" href="/">
+      <img src="favicon.svg" alt="" width="26" height="26">
+      <span>wirestudio</span>
+    </a>
+    <nav>
+      <a href="https://github.com/moellere/wirestudio#readme">Docs</a>
+      <a href="https://github.com/moellere/wirestudio" class="nav-cta">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <div class="container">
+      <h1>Design IoT devices, honestly.</h1>
+      <p class="lede">
+        wirestudio takes a single <code>design.json</code> and produces
+        deterministic ESPHome YAML, a KiCad schematic, and a bill of
+        materials. Same design in, same artifacts out — every time.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/moellere/wirestudio#getting-started">Get started</a>
+        <a class="btn btn-ghost" href="https://github.com/moellere/wirestudio">View on GitHub</a>
+      </div>
+
+      <div class="code-card" aria-hidden="true">
+        <div class="code-bar"><span></span><span></span><span></span></div>
+        <pre><code><span class="c-prompt">$</span> wirestudio generate garage-motion.json
+<span class="c-ok">✓</span> garage-motion.yaml   <span class="c-dim">esphome config — passes</span>
+<span class="c-ok">✓</span> garage-motion.txt    <span class="c-dim">ascii pinout + BOM</span>
+<span class="c-ok">✓</span> garage-motion.skidl  <span class="c-dim">KiCad schematic script</span></code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats">
+    <div class="container stats-inner">
+      <div class="stat"><strong>56</strong><span>components</span></div>
+      <div class="stat"><strong>14</strong><span>boards</span></div>
+      <div class="stat"><strong>26</strong><span>example designs</span></div>
+      <div class="stat"><strong>MCP</strong><span>ready</span></div>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="container">
+      <h2>What it does</h2>
+      <div class="grid">
+
+        <article class="card">
+          <h3>Verified ESPHome YAML</h3>
+          <p>Every bundled example is run through upstream
+          <code>esphome config</code> on each change. The output is real
+          ESPHome, not a plausible guess.</p>
+        </article>
+
+        <article class="card">
+          <h3>CSP pin solver</h3>
+          <p>Assigns legal GPIOs automatically and surfaces boot-strap,
+          ADC2-on-WiFi, voltage, and locked-pin conflicts before you
+          ever flash a board.</p>
+        </article>
+
+        <article class="card">
+          <h3>KiCad schematic export</h3>
+          <p>Emits a SKiDL script that builds a <code>.kicad_sch</code>
+          from the same netlist — no LLM placing wires, fully diffable
+          in git.</p>
+        </article>
+
+        <article class="card">
+          <h3>Parametric enclosure</h3>
+          <p>Generates an OpenSCAD shell from board mount-hole and
+          port geometry, so the box fits the design you just drew.</p>
+        </article>
+
+        <article class="card">
+          <h3>MCP server</h3>
+          <p>Drives the design tools from Claude Code or Claude Desktop
+          over the Model Context Protocol — on your subscription, no
+          API keys to wire up.</p>
+        </article>
+
+        <article class="card">
+          <h3>Fleet handoff</h3>
+          <p>Pushes finished YAML to a
+          <a href="https://github.com/weirded/fleet-for-esphome">fleet-for-esphome</a>
+          add-on for compile and OTA deploy with live log streaming.</p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="how">
+    <div class="container">
+      <h2>One source of truth</h2>
+      <p class="how-lede">
+        <code>design.json</code> is the only state. The generators are
+        pure functions of that file plus the component library — no
+        artifact ever round-trips back into the design.
+      </p>
+      <div class="pipeline">
+        <div class="node node-source">design.json</div>
+        <div class="arrow">→</div>
+        <div class="node node-engine">pure generators</div>
+        <div class="arrow">→</div>
+        <div class="node-outputs">
+          <span>ESPHome YAML</span>
+          <span>ASCII pinout</span>
+          <span>KiCad schematic</span>
+          <span>BOM</span>
+        </div>
+      </div>
+      <p class="how-note">
+        No LLM sits in a compile or fetch path. Chat is a thin surface
+        over the design-editing tools only — so a design is
+        reproducible, diffable, and cheap to regenerate.
+      </p>
+    </div>
+  </section>
+
+  <section class="closing">
+    <div class="container">
+      <h2>Open source, MIT licensed</h2>
+      <p>Install it, run the HTTP API, or drive it from your editor.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/moellere/wirestudio#getting-started">Get started</a>
+        <a class="btn btn-ghost" href="https://github.com/moellere/wirestudio">Star on GitHub</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <span>wirestudio — MIT licensed</span>
+    <span class="footer-links">
+      <a href="https://github.com/moellere/wirestudio">GitHub</a>
+      <a href="https://github.com/moellere/wirestudio#readme">Docs</a>
+      <a href="https://esphome.io">ESPHome</a>
+    </span>
+    <span class="disclaimer">Produces ESPHome configs; not affiliated with the ESPHome project.</span>
+  </div>
+</footer>
+
+</body>
+</html>
