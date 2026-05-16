@@ -691,7 +691,10 @@ function ConnectionsPane({
 }
 
 
-function FullComponentView({ comp, compact = false }: { comp: unknown; compact?: boolean }) {
+function FullComponentView(
+  { comp, compact = false, hideNotes = false }:
+  { comp: unknown; compact?: boolean; hideNotes?: boolean },
+) {
   const c = comp as Record<string, unknown>;
   const electrical = (c.electrical ?? {}) as Record<string, unknown>;
   const pins = Array.isArray(electrical.pins) ? electrical.pins as Array<Record<string, unknown>> : [];
@@ -732,7 +735,7 @@ function FullComponentView({ comp, compact = false }: { comp: unknown; compact?:
       {required.length > 0 && (
         <KV k="required" v={required.join(", ")} />
       )}
-      {Boolean(c.notes) && (
+      {!hideNotes && Boolean(c.notes) && (
         <p className="text-[11px] text-zinc-400">{String(c.notes)}</p>
       )}
     </div>
